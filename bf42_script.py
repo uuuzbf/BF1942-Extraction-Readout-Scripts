@@ -4,8 +4,34 @@ import math
 import pickle
 import json
 import sys
+import traceback
 from pathlib import PurePosixPath as BFPath
 from inspect import signature, Parameter
+
+
+class KeyedList:
+    def __init__(self, value2key):
+        self._list = list()
+        self._dict = dict()
+        self._value2keyfn = value2key
+    
+    def append(self, value):
+        self._list.append(value)
+        self._dict[self._value2keyfn(value)] = value
+    
+    def get(self, key, default=None):
+        return self._dict.get(key, default)
+    
+    def index(self, value):
+        return self._list.index(value)
+
+    def __iter__(self):
+        return self._list.__iter__()
+    
+    def __getitem__(self, x):
+        if isinstance(x, int):
+            return self._list[x]
+        return self._dict[x]
 
 class BFMethodCache:
     def __init__(self, methods):
@@ -158,9 +184,9 @@ def bf42_is_linked(template):
 
 class BF42_data:
     def __init__(self):
-        self.objectTemplates = []
+        self.objectTemplates = KeyedList(lambda template: template.name.lower())
         self.networkableInfos = []
-        self.geometryTemplates = []
+        self.geometryTemplates = KeyedList(lambda template: template.name.lower())
         self.objects = []
         self.staticObjects = [] # subCatergory of objects
         self.active_ObjectTemplate = None
@@ -195,11 +221,7 @@ class BF42_data:
         return(None)
     
     def getObjectTemplate(self, name):
-        for objectTemplate in self.objectTemplates:
-            if objectTemplate.name.lower() == name.lower():
-                return(objectTemplate)
-        # print("could not find objectTemplate: "+name)
-        return(None)
+        return self.objectTemplates.get(name.lower(), None)
     
     def getNetworkableInfo(self, name):
         for networkableInfo in self.networkableInfos:
@@ -208,10 +230,7 @@ class BF42_data:
         return(None)
     
     def getGeometryTemplate(self, name):
-        for geometryTemplate in self.geometryTemplates:
-            if geometryTemplate.name.lower() == name.lower():
-                return(geometryTemplate)
-        return(None)
+        return self.geometryTemplates.get(name)
         
     def creatLinks(self):
         for object in self.objects:
@@ -626,7 +645,7 @@ class BF42_script:
                                     else:
                                         if data.active_ObjectTemplate != None:
                                             data.active_ObjectTemplate.execMethod(command.method, command.arguments)
-                                if command == "networkableInfo":
+                                elif command == "networkableInfo":
                                     if command == ".createNewInfo":
                                         if numArgs == 1:
                                             if data.getNetworkableInfo(command.arguments[0]) == None:
@@ -635,7 +654,7 @@ class BF42_script:
                                     else:
                                         if data.active_NetworkableInfo != None:
                                             data.active_NetworkableInfo.execMethod(command.method, command.arguments)
-                                if command == "geometryTemplate":
+                                elif command == "geometryTemplate":
                                     if command == ".create":
                                         if numArgs == 2:
                                             if data.getGeometryTemplate(command.arguments[1]) == None:
