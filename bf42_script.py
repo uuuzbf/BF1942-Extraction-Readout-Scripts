@@ -51,12 +51,13 @@ class BFMethodCache:
         methodInfo = self.methodInfos.get(name.lower())
         if not methodInfo:
             return False
-        if len(arguments) < methodInfo['minparams']:
+        argumentCount = len(arguments)
+        if argumentCount < methodInfo['minparams'] or methodInfo['maxparams'] < argumentCount:
             return False
-            #raise AttributeError(f'Invalid number of parameters, {methoddesc["minparams"]} expected, got {len(arguments)}')
+            #raise AttributeError(f'Invalid number of parameters, {methoddesc["minparams"]} expected, got {argumentCount}')
         method = methodInfo['method']
         method.__closure__[0].cell_contents = other_self
-        return method(*arguments[:methodInfo['maxparams']])
+        return method(*arguments)
 
 
 # method to store objects as strings:
