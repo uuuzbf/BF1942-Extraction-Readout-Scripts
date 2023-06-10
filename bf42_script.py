@@ -5,7 +5,7 @@ import pickle
 import json
 import sys
 from pathlib import PurePosixPath as BFPath
-from inspect import signature
+from inspect import signature, Parameter
 
 class BFMethodCache:
     def __init__(self, methods):
@@ -14,6 +14,7 @@ class BFMethodCache:
             name = name.lower()
             methoddesc = {
                 'method': method,
+                'minparams': sum((1 if param.default == Parameter.empty else 0) for param in signature(method).parameters.values()),
                 'maxparams': len(signature(method).parameters)
             }
             mapping[name] = methoddesc
@@ -24,6 +25,9 @@ class BFMethodCache:
         methoddesc = self.mapping.get(name.lower())
         if not methoddesc:
             return False
+        if len(arguments) < methoddesc['minparams']:
+            return False
+            #raise AttributeError(f'Invalid number of parameters, {methoddesc["minparams"]} expected, got {len(arguments)}')
         m = methoddesc['method']
         m.__closure__[0].cell_contents = other_self
         return m(*arguments[:methoddesc['maxparams']])
