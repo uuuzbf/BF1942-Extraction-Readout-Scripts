@@ -242,10 +242,13 @@ class RefractorFlatArchiveGroup:
     
     def getFileList(self):
         filePathList = []
+        temp = set()
         for rfa in self.rfas:
             for fileInfo in rfa.fileList:
-                if not fileInfo[0].lower() in (path.lower() for path in filePathList):
+                lcfilename = fileInfo[0].lower()
+                if lcfilename not in temp:
                     filePathList.append(fileInfo[0])
+                    temp.add(lcfilename)
         return(filePathList)
         
     def fileExists(self, path):
