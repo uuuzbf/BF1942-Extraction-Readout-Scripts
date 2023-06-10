@@ -5,6 +5,29 @@ import pickle
 import json
 import sys
 from pathlib import PurePosixPath as BFPath
+from inspect import signature
+
+class BFMethodCache:
+    def __init__(self, methods):
+        mapping = dict()
+        for name,method in methods.items():
+            name = name.lower()
+            methoddesc = {
+                'method': method,
+                'maxparams': len(signature(method).parameters)
+            }
+            mapping[name] = methoddesc
+            mapping['set'+name] = methoddesc
+        self.mapping = mapping
+    
+    def callMethod(self, other_self, name, arguments):
+        methoddesc = self.mapping.get(name.lower())
+        if not methoddesc:
+            return False
+        m = methoddesc['method']
+        m.__closure__[0].cell_contents = other_self
+        return m(*arguments[:methoddesc['maxparams']])
+
 
 # method to store objects as strings:
 def dumps(objectToDump):
@@ -344,6 +367,7 @@ class BF42_ObjectTemplate:
         self.active_child = None
         self.parents = [] # not used inside module
     
+    methodcache = None
     def execMethod(self, methodName, arguments):
         def networkableInfo(value):
             if value != None: self.networkableInfo = value
@@ -425,14 +449,12 @@ class BF42_ObjectTemplate:
             if self.active_child != None:
                 self.active_child.setRotation = BF42_vec3(value)
         
-        methods = locals()
-        methods = {name: methods[name] for name in methods if not name in ['methodName', 'arguments']}
-        for method in methods:
-            if isMethod(methodName, method):
-                try: return(methods[method](*arguments))
-                except: pass
-                break
-        return(False)
+        if not BF42_ObjectTemplate.methodcache:
+            methods = locals()
+            methods = {name: methods[name] for name in methods if not name in ['self', 'methodName', 'arguments']}
+            BF42_ObjectTemplate.methodcache = BFMethodCache(methods)
+        
+        return BF42_ObjectTemplate.methodcache.callMethod(self, methodName, arguments)
 
 class BF42_ObjectTemplateChild:
     def __init__(self, template):
@@ -449,19 +471,18 @@ class BF42_NetworkableInfo:
         self.predictionMode = 0 # PMNone
         self.forceNetworkableId = False
     
+    methodcache = None
     def execMethod(self, methodName, arguments):
         def setBasePriority(value): self.basePriority = float(value)
         def setIsUnique(value): self.isUnique = bool(int(value))
         def setPredictionMode(value): self.predictionMode = predictionModeEnum.index(value)
         
-        methods = locals()
-        methods = {name: methods[name] for name in methods if not name in ['methodName', 'arguments']}
-        for method in methods:
-            if isMethod(methodName, method):
-                try: return(methods[method](*arguments))
-                except: pass
-                break
-        return(False)
+        if not BF42_NetworkableInfo.methodcache:
+            methods = locals()
+            methods = {name: methods[name] for name in methods if not name in ['self', 'methodName', 'arguments']}
+            BF42_NetworkableInfo.methodcache = BFMethodCache(methods)
+        
+        return BF42_NetworkableInfo.methodcache.callMethod(self, methodName, arguments)
 
 class BF42_GeometryTemplate:
     def __init__(self, type, name):
@@ -474,6 +495,7 @@ class BF42_GeometryTemplate:
         self.yScale = 1
         self.waterLevel = 0
     
+    methodcache = None
     def execMethod(self, methodName, arguments):
         def scale(value): self.scale = BF42_vec3(value)
         def file(value): self.file = value.replace("\\","/")
@@ -481,13 +503,13 @@ class BF42_GeometryTemplate:
         def worldsize(value): self.worldsize = int(value)
         def yscale(value): self.yscale = float(value)
         def waterlevel(value): self.waterlevel = float(value)
-        methods = locals()
-        methods = {name: methods[name] for name in methods if not name in ['methodName', 'arguments']}
-        for method in methods:
-            if isMethod(methodName, method):
-                try: methods[method](*arguments)
-                except: pass
-                break
+        
+        if not BF42_GeometryTemplate.methodcache:
+            methods = locals()
+            methods = {name: methods[name] for name in methods if not name in ['self', 'methodName', 'arguments']}
+            BF42_GeometryTemplate.methodcache = BFMethodCache(methods)
+        
+        return BF42_GeometryTemplate.methodcache.callMethod(self, methodName, arguments)
         
 class BF42_Object:
     def __init__(self, template, ID):
