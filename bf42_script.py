@@ -8,6 +8,8 @@ import traceback
 from pathlib import PurePosixPath as BFPath
 from inspect import signature, Parameter
 
+class BFMethodError(Exception): pass
+
 
 class KeyedList:
     def __init__(self, valueToKeyFunc):
@@ -33,31 +35,42 @@ class KeyedList:
             return self._list[x]
         return self._dict[x]
 
-class BFMethodCache:
+class BFMethodMapper:
     def __init__(self, methods):
-        methodInfos = dict()
-        for name,method in methods.items():
-            name = name.lower()
+        self.methodInfos = {}
+        for methodName, method in methods.items():
             methodInfo = {
                 'method': method,
-                'minparams': sum((1 if param.default == Parameter.empty else 0) for param in signature(method).parameters.values()),
-                'maxparams': len(signature(method).parameters)
+                'minparams': sum((1 if param.default == Parameter.empty else 0) for param in signature(method).parameters.values())-1,
+                'maxparams': len(signature(method).parameters)-1,
             }
-            methodInfos[name] = methodInfo
-            methodInfos['set'+name] = methodInfo
-        self.methodInfos = methodInfos
+            self.methodInfos[methodName] = methodInfo
+            self.methodInfos['set'+methodName] = methodInfo
     
-    def callMethod(self, other_self, name, arguments):
+    def callMethod(self, obj, name, arguments):
         methodInfo = self.methodInfos.get(name.lower())
-        if not methodInfo:
-            return False
-        argumentCount = len(arguments)
-        if argumentCount < methodInfo['minparams'] or methodInfo['maxparams'] < argumentCount:
-            return False
-            #raise AttributeError(f'Invalid number of parameters, {methoddesc["minparams"]} expected, got {argumentCount}')
-        method = methodInfo['method']
-        method.__closure__[0].cell_contents = other_self
-        return method(*arguments)
+        if not methodInfo: return False
+        #argumentCount = len(arguments)
+        #if argumentCount < methodInfo['minparams'] or methodInfo['maxparams'] < argumentCount:
+            # raise AttributeError(f'Invalid number of parameters, {methodInfo["minparams"]} expected, got {argumentCount}')
+            #return False
+        try:
+            return methodInfo['method'](obj, *arguments)
+        except (TypeError, ValueError) as e:
+            raise BFMethodError(str(e))
+
+    @staticmethod
+    def execMethod(obj, method, arguments):
+        return obj.methodMapper.callMethod(obj, method, arguments)
+
+def scriptclass(cls):
+    methodMappingDict = {
+        func.lower(): getattr(cls, func)
+            for func in dir(cls)
+                if callable(getattr(cls, func)) and not func.startswith('__')
+    }
+    cls.methodMapper = BFMethodMapper(methodMappingDict)
+    return cls
 
 
 # method to store objects as strings:
@@ -246,17 +259,17 @@ class BF42_data:
                     if template != None:
                         child.template = template
                         template.parents.append(objectTemplate)
-            if objectTemplate.networkableInfo:
-                if not bf42_is_linked(objectTemplate.networkableInfo):
-                    objectTemplate.networkableInfo = self.getNetworkableInfo(objectTemplate.networkableInfo)
-            geometry = self.getGeometryTemplate(objectTemplate.geometry)
+            if objectTemplate._networkableInfo:
+                if not bf42_is_linked(objectTemplate._networkableInfo):
+                    objectTemplate._networkableInfo = self.getNetworkableInfo(objectTemplate._networkableInfo)
+            geometry = self.getGeometryTemplate(objectTemplate._geometry)
             if geometry != None:
-                objectTemplate.geometry = geometry
+                objectTemplate._geometry = geometry
         
     def dumps(self):
         list_dump = [[],[],[],[]]
         for objectTemplate in self.objectTemplates:
-            geometry = self.geometryTemplates.index(objectTemplate.geometry) if bf42_is_linked(objectTemplate.geometry) else objectTemplate.geometry
+            geometry = self.geometryTemplates.index(objectTemplate.geometry) if bf42_is_linked(objectTemplate._geometry) else objectTemplate._geometry
             childeren = []
             for child in objectTemplate.childeren:
                 template = self.objectTemplates.index(child.template) if bf42_is_linked(child.template) else child.template
@@ -277,7 +290,7 @@ class BF42_data:
         # load objectTemplates
         for (type, name, geometry, triggerRadius, linePoints, childeren) in list_dump[0]:
             objectTemplate = BF42_ObjectTemplate(type, name)
-            objectTemplate.geometry = geometry
+            objectTemplate._geometry = geometry
             objectTemplate.triggerRadius = triggerRadius
             objectTemplate.linePoints = [BF42_vec3(linePoint) for linePoint in linePoints]
             for (template, setPosition, setRotation) in childeren:
@@ -301,8 +314,8 @@ class BF42_data:
             for child in objectTemplate.childeren:
                 if bf42_is_linked(child.template):
                     child.template = self.objectTemplates[child.template]
-            if bf42_is_linked(objectTemplate.geometry):
-                objectTemplate.geometry = self.geometryTemplates[objectTemplate.geometry]
+            if bf42_is_linked(objectTemplate._geometry):
+                objectTemplate._geometry = self.geometryTemplates[objectTemplate._geometry]
         # load and link objects
         for (template, absolutePosition, rotation, geometry_scale) in list_dump[2]:
             object = BF42_Object("")
@@ -318,167 +331,152 @@ class BF42_data:
 
 predictionModeEnum = ['PMNone', 'PMLinear', 'PMCubic', 'PMUsePhysics']
 
+@scriptclass
 class BF42_Game:
     def __init__(self):
-        self.mapId = None
-        self.activeCombatArea = None
-        self.customGameName = None
-        self.customGameVersion = None
-        self.multiplayerBriefingObjectives = None
-        self.objectiveBriefing = None
-        self.modPaths = []
+        self._mapId = None
+        self._activeCombatArea = None
+        self._customGameName = None
+        self._customGameVersion = None
+        self._multiplayerBriefingObjectives = None
+        self._objectiveBriefing = None
+        self._modPaths = []
     
-    def execMethod(self, methodName, arguments):
-        def setMapId(value): self.mapId = value
-        def setActiveCombatArea(a,b,c,d): self.activeCombatArea = (int(a), int(b), int(c), int(d))
-        def customGameName(value = None):
-            if value != None: self.customGameName = value
-            return(self.customGameName)
-        def customGameVersion(value = None):
-            if value != None: self.customGameVersion = value
-            return(self.customGameVersion)
-        def addModPath(value): self.modPaths.append(value)
-        def setMultiplayerBriefingObjectives(value): self.multiplayerBriefingObjectives = value
-        def setObjectiveBriefing(value): self.objectiveBriefing = value
-        
-        methods = locals()
-        methods = {name: methods[name] for name in methods if not name in ['methodName', 'arguments']}
-        for method in methods:
-            if isMethod(methodName, method):
-                try: return(methods[method](*arguments))
-                except: pass
-                break
-        return(False)
+    def setMapId(self, value): self._mapId = value
+    def setActiveCombatArea(self, a,b,c,d): self._activeCombatArea = (int(a), int(b), int(c), int(d))
+    def customGameName(self, value = None):
+        if value != None: self._customGameName = value
+        return(self._customGameName)
+    def customGameVersion(self, value = None):
+        if value != None: self._customGameVersion = value
+        return(self._customGameVersion)
+    def addModPath(self, value): self._modPaths.append(value)
+    def setMultiplayerBriefingObjectives(self, value): self._multiplayerBriefingObjectives = value
+    def setObjectiveBriefing(self, value): self._objectiveBriefing = value
 
+
+@scriptclass
 class BF42_ObjectTemplate:
     def __init__(self, type, name, ID):
         self.ID = ID
         self.type = type
         self.name = name
-        self.networkableInfo = None
-        self.geometry = "" # string will be replaced by a reference after linking
-        self.maxHitPoints = 10
-        self.minRotation = BF42_vec3((0,0,0))
-        self.maxRotation = BF42_vec3((0,0,0))
-        self.maxSpeed = BF42_vec3((1,1,1))
-        self.acceleration = BF42_vec3((0.1,0.1,0.1))
-        self.inputToYaw = 55
-        self.inputToPitch = 55
-        self.inputToRoll = 55
-        self.automaticReset = False
-        self.magSize = 30
-        self.numOfMag = 3
-        self.numberOfGears = None
-        self.gearUp = 0.7
-        self.gearDown = 0.3
-        self.triggerRadius = 0
-        self.linePoints = []
-        self.controlPointName = ""
-        self.team = None
-        self.unableToChangeTeam = None
+        self._networkableInfo = None
+        self._geometry = "" # string will be replaced by a reference after linking
+        self._maxHitPoints = 10
+        self._minRotation = BF42_vec3((0,0,0))
+        self._maxRotation = BF42_vec3((0,0,0))
+        self._maxSpeed = BF42_vec3((1,1,1))
+        self._acceleration = BF42_vec3((0.1,0.1,0.1))
+        self._inputToYaw = 55
+        self._inputToPitch = 55
+        self._inputToRoll = 55
+        self._automaticReset = False
+        self._magSize = 30
+        self._numOfMag = 3
+        self._numberOfGears = None
+        self._gearUp = 0.7
+        self._gearDown = 0.3
+        self._triggerRadius = 0
+        self._linePoints = []
+        self._controlPointName = ""
+        self._team = None
+        self._unableToChangeTeam = None
         
-        self.MinSpawnDelay = None
-        self.MaxSpawnDelay = None
-        self.SpawnDelayAtStart = None
-        self.TimeToLive = None
-        self.Distance = None
-        self.DamageWhenLost = None
-        self.maxNrOfObjectSpawned = None
-        self.teamOnVehicle = None
-        self.objectTemplates = {} # for objectSpawners
+        self._MinSpawnDelay = None
+        self._MaxSpawnDelay = None
+        self._SpawnDelayAtStart = None
+        self._TimeToLive = None
+        self._Distance = None
+        self._DamageWhenLost = None
+        self._maxNrOfObjectSpawned = None
+        self._teamOnVehicle = None
+        self._objectTemplates = {} # for objectSpawners
         
         self.childeren = []
         self.active_child = None
         self.parents = [] # not used inside module
     
-    methodcache = None
-    def execMethod(self, methodName, arguments):
-        def networkableInfo(value):
-            if value != None: self.networkableInfo = value
-            return(self.networkableInfo)
-        def geometry(value):
-            if value != None: self.geometry = value
-            return(self.geometry)
-        def maxHitPoints(value = None):
-            if value != None: self.maxHitPoints = float(value)
-            return(self.maxHitPoints)
-        def minRotation(value = None):
-            if value != None: self.minRotation = BF42_vec3(value)
-            return(self.minRotation)
-        def maxRotation(value = None):
-            if value != None: self.maxRotation = BF42_vec3(value)
-            return(self.maxRotation)
-        def maxSpeed(value = None):
-            if value != None: self.maxSpeed = BF42_vec3(value)
-            return(self.maxSpeed)
-        def acceleration(value = None):
-            if value != None: self.acceleration = BF42_vec3(value)
-            return(self.acceleration)
-        def inputToPitch(value = None):
-            if value != None: self.inputToPitch = int(value)
-            return(self.inputToPitch)
-        def inputToYaw(value = None):
-            if value != None: self.inputToYaw = int(value)
-            return(self.inputToYaw)
-        def inputToRoll(value = None):
-            if value != None: self.inputToRoll = int(value)
-            return(self.inputToRoll)
-        def automaticReset(value = None):
-            if value != None: self.automaticReset = bool(int(value))
-            return(self.automaticReset)
-        def magSize(value = None):
-            if value != None: self.magSize = int(value)
-            return(self.magSize)
-        def numOfMag(value = None):
-            if value != None: self.numOfMag = int(value)
-            return(self.numOfMag)
-        def numberOfGears(value = None):
-            if value != None: self.numberOfGears  = int(value)
-            return(self.numberOfGears)
-        def gearUp(value = None):
-            if value != None: self.gearUp  = float(value)
-            return(self.gearUp )
-        def gearDown(value = None):
-            if value != None: self.gearDown  = float(value)
-            return(self.gearDown)
-        def triggerRadius(value): self.triggerRadius = int(value)
-        def addLinePoint(value): self.linePoints.append(BF42_vec3(value))
-        def controlPointName(value): self.controlPointName = value
-        def team(value): self.team = value
-        def unableToChangeTeam(value): self.unableToChangeTeam = value
-        
-        def MinSpawnDelay(value): self.MinSpawnDelay = value
-        def MaxSpawnDelay(value): self.MaxSpawnDelay = value
-        def SpawnDelayAtStart(value): self.SpawnDelayAtStart = value
-        def TimeToLive(value): self.TimeToLive = value
-        def Distance(value): self.Distance = value
-        def DamageWhenLost(value): self.DamageWhenLost = value
-        def maxNrOfObjectSpawned(value): self.maxNrOfObjectSpawned = value
-        def teamOnVehicle(value): self.teamOnVehicle = value
-        def setObjectTemplate(key, value): self.objectTemplates[int(key)] = value
-        
-        def addTemplate(value):
-            self.active_child = BF42_ObjectTemplateChild(value)
-            self.childeren.append(self.active_child)
-        def setActiveTemplate(value):
-            if len(self.childeren) > int(value):
-                self.active_child = self.childeren[int(value)]
-        def removeTemplate(value):
-            if len(self.childeren) > int(value):
-                self.childeren.pop(int(value))
-        def setPosition(value):
-            if self.active_child != None:
-                self.active_child.setPosition = BF42_vec3(value)
-        def setRotation(value):
-            if self.active_child != None:
-                self.active_child.setRotation = BF42_vec3(value)
-        
-        if not BF42_ObjectTemplate.methodcache:
-            methods = locals()
-            methods = {name: methods[name] for name in methods if not name in ['self', 'methodName', 'arguments']}
-            BF42_ObjectTemplate.methodcache = BFMethodCache(methods)
-        
-        return BF42_ObjectTemplate.methodcache.callMethod(self, methodName, arguments)
+    def networkableInfo(self, value):
+        if value != None: self._networkableInfo = value
+        return(self._networkableInfo)
+    def geometry(self, value):
+        if value != None: self._geometry = value
+        return(self._geometry)
+    def maxHitPoints(self, value = None):
+        if value != None: self._maxHitPoints = float(value)
+        return(self._maxHitPoints)
+    def minRotation(self, value = None):
+        if value != None: self._minRotation = BF42_vec3(value)
+        return(self._minRotation)
+    def maxRotation(self, value = None):
+        if value != None: self._maxRotation = BF42_vec3(value)
+        return(self._maxRotation)
+    def maxSpeed(self, value = None):
+        if value != None: self._maxSpeed = BF42_vec3(value)
+        return(self._maxSpeed)
+    def acceleration(self, value = None):
+        if value != None: self._acceleration = BF42_vec3(value)
+        return(self._acceleration)
+    def inputToPitch(self, value = None):
+        if value != None: self._inputToPitch = int(value)
+        return(self._inputToPitch)
+    def inputToYaw(self, value = None):
+        if value != None: self._inputToYaw = int(value)
+        return(self._inputToYaw)
+    def inputToRoll(self, value = None):
+        if value != None: self._inputToRoll = int(value)
+        return(self._inputToRoll)
+    def automaticReset(self, value = None):
+        if value != None: self._automaticReset = bool(int(value))
+        return(self._automaticReset)
+    def magSize(self, value = None):
+        if value != None: self._magSize = int(value)
+        return(self._magSize)
+    def numOfMag(self, value = None):
+        if value != None: self._numOfMag = int(value)
+        return(self._numOfMag)
+    def numberOfGears(self, value = None):
+        if value != None: self._numberOfGears  = int(value)
+        return(self._numberOfGears)
+    def gearUp(self, value = None):
+        if value != None: self._gearUp  = float(value)
+        return(self._gearUp )
+    def gearDown(self, value = None):
+        if value != None: self._gearDown  = float(value)
+        return(self._gearDown)
+    def triggerRadius(self, value): self._triggerRadius = int(value)
+    def addLinePoint(self, value): self._linePoints.append(BF42_vec3(value))
+    def controlPointName(self, value): self._controlPointName = value
+    def team(self, value): self._team = value
+    def unableToChangeTeam(self, value): self._unableToChangeTeam = value
+    
+    def MinSpawnDelay(self, value): self._MinSpawnDelay = value
+    def MaxSpawnDelay(self, value): self._MaxSpawnDelay = value
+    def SpawnDelayAtStart(self, value): self._SpawnDelayAtStart = value
+    def TimeToLive(self, value): self._TimeToLive = value
+    def Distance(self, value): self._Distance = value
+    def DamageWhenLost(self, value): self._DamageWhenLost = value
+    def maxNrOfObjectSpawned(self, value): self._maxNrOfObjectSpawned = value
+    def teamOnVehicle(self, value): self._teamOnVehicle = value
+    def setObjectTemplate(self, key, value): self._objectTemplates[int(key)] = value
+    
+    def addTemplate(self, value):
+        self.active_child = BF42_ObjectTemplateChild(value)
+        self.childeren.append(self.active_child)
+    def setActiveTemplate(self, value):
+        if len(self.childeren) > int(value):
+            self.active_child = self.childeren[int(value)]
+    def removeTemplate(self, value):
+        if len(self.childeren) > int(value):
+            self.childeren.pop(int(value))
+    def setPosition(self, value):
+        if self.active_child != None:
+            self.active_child.setPosition = BF42_vec3(value)
+    def setRotation(self, value):
+        if self.active_child != None:
+            self.active_child.setRotation = BF42_vec3(value)
+
 
 class BF42_ObjectTemplateChild:
     def __init__(self, template):
@@ -486,55 +484,41 @@ class BF42_ObjectTemplateChild:
         self.setPosition = BF42_vec3((0,0,0))
         self.setRotation = BF42_vec3((0,0,0))
 
+@scriptclass
 class BF42_NetworkableInfo:
     def __init__(self, name):
         self.name = name
-        self.isUnique = False
-        self.basePriority = 1.0
-        self.predictionMode = 0 # PMNone
-        self.predictionMode = 0 # PMNone
-        self.forceNetworkableId = False
+        self._isUnique = False
+        self._basePriority = 1.0
+        self._predictionMode = 0 # PMNone
+        self._predictionMode = 0 # PMNone
+        self._forceNetworkableId = False
     
-    methodcache = None
-    def execMethod(self, methodName, arguments):
-        def setBasePriority(value): self.basePriority = float(value)
-        def setIsUnique(value): self.isUnique = bool(int(value))
-        def setPredictionMode(value): self.predictionMode = predictionModeEnum.index(value)
-        
-        if not BF42_NetworkableInfo.methodcache:
-            methods = locals()
-            methods = {name: methods[name] for name in methods if not name in ['self', 'methodName', 'arguments']}
-            BF42_NetworkableInfo.methodcache = BFMethodCache(methods)
-        
-        return BF42_NetworkableInfo.methodcache.callMethod(self, methodName, arguments)
+    def setBasePriority(self, value): self._basePriority = float(value)
+    def setIsUnique(self, value): self._isUnique = bool(int(value))
+    def setPredictionMode(self, value): self._predictionMode = predictionModeEnum.index(value)
 
+
+@scriptclass
 class BF42_GeometryTemplate:
     def __init__(self, type, name):
         self.type = type
         self.name = name
-        self.scale = BF42_vec3((1,1,1))
-        self.file = None
-        self.materialSize = 256
-        self.worldSize = 1024
-        self.yScale = 1
-        self.waterLevel = 0
+        self._scale = BF42_vec3((1,1,1))
+        self._file = None
+        self._materialSize = 256
+        self._worldSize = 1024
+        self._yScale = 1
+        self._waterLevel = 0
     
-    methodcache = None
-    def execMethod(self, methodName, arguments):
-        def scale(value): self.scale = BF42_vec3(value)
-        def file(value): self.file = value.replace("\\","/")
-        def materialsize(value): self.materialsize = int(value)
-        def worldsize(value): self.worldsize = int(value)
-        def yscale(value): self.yscale = float(value)
-        def waterlevel(value): self.waterlevel = float(value)
-        
-        if not BF42_GeometryTemplate.methodcache:
-            methods = locals()
-            methods = {name: methods[name] for name in methods if not name in ['self', 'methodName', 'arguments']}
-            BF42_GeometryTemplate.methodcache = BFMethodCache(methods)
-        
-        return BF42_GeometryTemplate.methodcache.callMethod(self, methodName, arguments)
-        
+    def scale(self, value): self._scale = BF42_vec3(value)
+    def file(self, value): self._file = value.replace("\\","/")
+    def materialsize(self, value): self._materialsize = int(value)
+    def worldsize(self, value): self._worldsize = int(value)
+    def yscale(self, value): self._yscale = float(value)
+    def waterlevel(self, value): self._waterlevel = float(value)
+
+
 class BF42_Object:
     def __init__(self, template, ID):
         self.ID = ID
@@ -586,7 +570,7 @@ class BF42_script:
                 lines = iter(fileString.splitlines())
         except:
             print("Could not find file: "+path, file = sys.stderr)
-        for lineNumber, line_raw in enumerate(lines):
+        for lineNumber0, line_raw in enumerate(lines):
             try:
                 line = line_raw.strip()
                 command = BF42_command(line)
@@ -645,7 +629,7 @@ class BF42_script:
                                                 data.active_ObjectTemplate = refered_ObjectTemplate
                                     else:
                                         if data.active_ObjectTemplate != None:
-                                            data.active_ObjectTemplate.execMethod(command.method, command.arguments)
+                                            BFMethodMapper.execMethod(data.active_ObjectTemplate, command.method, command.arguments)
                                 elif command == "networkableInfo":
                                     if command == ".createNewInfo":
                                         if numArgs == 1:
@@ -654,7 +638,7 @@ class BF42_script:
                                                 data.networkableInfos.append(data.active_NetworkableInfo)
                                     else:
                                         if data.active_NetworkableInfo != None:
-                                            data.active_NetworkableInfo.execMethod(command.method, command.arguments)
+                                            BFMethodMapper.execMethod(data.active_NetworkableInfo, command.method, command.arguments)
                                 elif command == "geometryTemplate":
                                     if command == ".create":
                                         if numArgs == 2:
@@ -668,7 +652,7 @@ class BF42_script:
                                                 data.active_GeometryTemplate = refered_GeometryTemplate
                                     else:
                                         if data.active_GeometryTemplate != None:
-                                            data.active_GeometryTemplate.execMethod(command.method, command.arguments)
+                                            BFMethodMapper.execMethod(data.active_GeometryTemplate, command.method, command.arguments)
                                 
                                 elif command == "object":
                                     if command == ".create":
@@ -692,7 +676,7 @@ class BF42_script:
                                             data.textureManager_alternativePaths.append(command.arguments[0])
                                 
                                 elif command == "game":
-                                    returnValue = data.game.execMethod(command.method, command.arguments)
+                                    returnValue = BFMethodMapper.execMethod(data.game, command.method, command.arguments)
                                     if command.targetVariable != None and returnValue != False and command.targetVariable in data.variables:
                                         data.variables[command.targetVariable] = returnValue
                                 
@@ -733,8 +717,10 @@ class BF42_script:
                                     if numArgs == 2:
                                         if command.className in data.constants:
                                             data.constants[command.className] = command.arguments[1]
-            except:
-                print(f'Exception in BF42_script.read(): {path} ({lineNumber}): {line}', file = sys.stderr)
+            except BFMethodError:
+                #traceback.print_exc(file = sys.stderr)
+                print(f'Exception in BF42_script.read(): {path} ({lineNumber0+1}): {line}', file = sys.stderr)
+                
         return(self.data)
 
 
