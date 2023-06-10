@@ -10,14 +10,14 @@ from inspect import signature, Parameter
 
 
 class KeyedList:
-    def __init__(self, value2key):
+    def __init__(self, valueToKeyFunc):
         self._list = list()
         self._dict = dict()
-        self._value2keyfn = value2key
+        self._valueToKeyFunc = valueToKeyFunc
     
     def append(self, value):
         self._list.append(value)
-        self._dict[self._value2keyfn(value)] = value
+        self._dict[self._valueToKeyFunc(value)] = value
     
     def get(self, key, default=None):
         return self._dict.get(key, default)
@@ -35,28 +35,28 @@ class KeyedList:
 
 class BFMethodCache:
     def __init__(self, methods):
-        mapping = dict()
+        methodInfos = dict()
         for name,method in methods.items():
             name = name.lower()
-            methoddesc = {
+            methodInfo = {
                 'method': method,
                 'minparams': sum((1 if param.default == Parameter.empty else 0) for param in signature(method).parameters.values()),
                 'maxparams': len(signature(method).parameters)
             }
-            mapping[name] = methoddesc
-            mapping['set'+name] = methoddesc
-        self.mapping = mapping
+            methodInfos[name] = methodInfo
+            methodInfos['set'+name] = methodInfo
+        self.methodInfos = methodInfos
     
     def callMethod(self, other_self, name, arguments):
-        methoddesc = self.mapping.get(name.lower())
-        if not methoddesc:
+        methodInfo = self.methodInfos.get(name.lower())
+        if not methodInfo:
             return False
-        if len(arguments) < methoddesc['minparams']:
+        if len(arguments) < methodInfo['minparams']:
             return False
             #raise AttributeError(f'Invalid number of parameters, {methoddesc["minparams"]} expected, got {len(arguments)}')
-        m = methoddesc['method']
-        m.__closure__[0].cell_contents = other_self
-        return m(*arguments[:methoddesc['maxparams']])
+        method = methodInfo['method']
+        method.__closure__[0].cell_contents = other_self
+        return method(*arguments[:methodInfo['maxparams']])
 
 
 # method to store objects as strings:
