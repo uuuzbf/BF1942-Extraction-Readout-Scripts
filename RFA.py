@@ -39,6 +39,7 @@ class RefractorFlatArchive:
         self.fileList = []
         self.fileListExternal = []
         self.fileSize = None
+        self.correctFilePathMapping = dict()
         if read:
             self.read()
     
@@ -60,6 +61,7 @@ class RefractorFlatArchive:
                     file_info = RefractorFlatArchive_Info(f)
                     unknowns = read_i(f,3)
                     self.fileList.append((entryPath, file_info))
+                    self.correctFilePathMapping[entryPath.lower()] = str(entryPath)
                     self.success = True
         except: pass
     
@@ -68,10 +70,7 @@ class RefractorFlatArchive:
         return(filePathList)
     
     def getCorrectFilePath(self, path):
-        for fileInfo in self.fileList:
-            if fileInfo[0].lower().replace('\\', '/') == path.lower().replace('\\', '/'):
-                return(fileInfo[0])
-        return(None)
+        return self.correctFilePathMapping.get(path.lower().replace('\\', '/'))
     
     def extractBlock(self, fileInfo, destinationPath = None, asBytes = False):
         self.success = False
@@ -127,12 +126,14 @@ class RefractorFlatArchive:
         for file in self.fileList:
             if file[0].lower() == relativePath.lower():
                 self.fileList.remove(file)
+                del self.correctFilePathMapping[file[0].lower()]
         self.fileListExternal.append([relativePath, False, filePath])
         
     def addFileAsSring(self, relativePath, contents):
         for file in self.fileList:
             if file[0].lower() == relativePath.lower():
                 self.fileList.remove(file)
+                del self.correctFilePathMapping[file[0].lower()]
         self.fileListExternal.append([relativePath, True, contents])
     
     def addDirectory(self, directory, base_directory = None):
